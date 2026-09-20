@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import argparse
+import os
 import subprocess
 import sys
 import tempfile
@@ -427,8 +429,16 @@ def differential(
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--jamp-mirror", default=os.environ.get("JAMP_MIRROR_PATH"))
+    args = parser.parse_args()
+
     harness_root = Path(__file__).resolve().parent
-    jamp_root = (harness_root / ".." / "JAMP").resolve()
+    jamp_root = (
+        Path(args.jamp_mirror).expanduser().resolve()
+        if args.jamp_mirror
+        else (harness_root / ".." / "JAMP").resolve()
+    )
 
     if not jamp_root.is_dir():
         raise SystemExit("JAMP repository not found")
