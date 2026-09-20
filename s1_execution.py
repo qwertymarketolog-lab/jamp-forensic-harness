@@ -392,8 +392,9 @@ def differential(
         }
 
     candidate_result = candidate["result"]
-    candidate_status = candidate_result.get("terminal_status")
-    candidate_halts = candidate_result.get("halt_reasons", [])
+    n3_data = candidate_result.get("n3", {})
+    candidate_status = n3_data.get("terminal_status")
+    candidate_halts = n3_data.get("halt_reasons", [])
 
     oracle_status = oracle_result.get("terminal_status")
     oracle_halts = oracle_result.get("halt_reasons", [])
