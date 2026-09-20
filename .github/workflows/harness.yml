@@ -1,0 +1,63 @@
+name: Harness CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "fix/**"
+
+jobs:
+  harness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile harness
+        run: python -m py_compile s1_execution.py
+
+      - name: Verify candidate n3 extraction
+        run: |
+          python - <<'PY'
+          import s1_execution
+
+          candidate = {
+              "execution_status": "OK",
+              "result": {
+                  "exp31": {"status": "VALID"},
+                  "n1": {"status": "PASS"},
+                  "n2": {"status": "PASS"},
+                  "n3": {
+                      "terminal_status": "TERMINAL_HALT",
+                      "halt_reasons": [
+                          {"stage": "N2", "diagnostic_code": "DUPLICATE_SOURCE_REF"}
+                      ],
+                  },
+              },
+          }
+          oracle = {
+              "terminal_status": "TERMINAL_HALT",
+              "halt_reasons": [
+                  {"stage": "N2", "diagnostic_code": "DUPLICATE_SOURCE_REF"}
+              ],
+          }
+          result = s1_execution.differential(
+              candidate,
+              oracle,
+              seed=42069,
+              vector=1,
+              original={"control": True},
+              mutated={"control": False},
+              fingerprint="test-fingerprint",
+          )
+          assert result["execution_status"] == "OK"
+          assert result["divergence_classification"] == "MATCH"
+          assert result["ordered_halt_reasons"] == oracle["halt_reasons"]
+          print("candidate result.n3 extraction: PASS")
+          PY
