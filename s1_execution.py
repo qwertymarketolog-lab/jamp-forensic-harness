@@ -12,12 +12,14 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
-CANDIDATE_SHA = "50448131f2fff887cdb037486614be47c8533f22"
+CANDIDATE_SHA = "0b0f15d4615cb129382c25af8859d450ac1193ff"
 ORACLE_SPEC_HASH = "oracle-v0-spec-hash-sha256:7f83b165"
 
 SEEDS = (
@@ -28,7 +30,7 @@ SEEDS = (
 VECTORS = tuple(range(1, 11))
 
 ARTIFACT_DIR = Path(__file__).resolve().parent / "artifacts"
-LEDGER_PATH = ARTIFACT_DIR / "s1-r1.ndjson"
+LEDGER_PATH = ARTIFACT_DIR / "s1-r2.ndjson"
 
 
 def canonical_json(value: Any) -> bytes:
@@ -295,14 +297,63 @@ def candidate_adapter(
             "error": f"candidate SHA mismatch: {actual}",
         }
 
-    # Deliberately no substitute candidate implementation.
-    return {
-        "execution_status": "ENV_FAILURE",
-        "error": (
-            "No executable EXP-31/N1-N3 candidate entrypoint is "
-            "available in the pinned candidate revision."
-        ),
-    }
+    with tempfile.TemporaryDirectory(prefix="jamp-s1-candidate-") as tmp:
+        archive = Path(tmp) / "candidate.tar"
+        extract_root = Path(tmp) / "candidate"
+        try:
+            with archive.open("wb") as fh:
+                subprocess.run(
+                    ["git", "-C", str(jamp_root), "archive", "--format=tar",
+                     CANDIDATE_SHA],
+                    check=True,
+                    stdout=fh,
+                    stderr=subprocess.PIPE,
+                )
+            extract_root.mkdir()
+            subprocess.run(
+                ["tar", "-xf", str(archive), "-C", str(extract_root)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            candidate_path = (
+                extract_root / "tests" / "research" / "exp31" / "candidate.py"
+            )
+            if not candidate_path.is_file():
+                return {
+                    "execution_status": "ENV_FAILURE",
+                    "error": "pinned candidate.py not found in archive",
+                }
+
+            import importlib.util
+
+            spec = importlib.util.spec_from_file_location(
+                "jamp_exp31_candidate", candidate_path
+            )
+            if spec is None or spec.loader is None:
+                return {
+                    "execution_status": "ENV_FAILURE",
+                    "error": "unable to load pinned candidate module",
+                }
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+
+            result = module.execute(payload)
+            if not isinstance(result, dict):
+                return {
+                    "execution_status": "ENV_FAILURE",
+                    "error": "candidate execute(payload) returned non-dict",
+                }
+            return {
+                "execution_status": "OK",
+                "result": result,
+            }
+        except (OSError, subprocess.CalledProcessError, Exception) as exc:
+            return {
+                "execution_status": "ENV_FAILURE",
+                "error": f"candidate execution failed: {exc}",
+            }
 
 
 def differential(
@@ -330,14 +381,49 @@ def differential(
             "candidate_verdict": None,
             "oracle_verdict": oracle_result,
             "ordered_halt_reasons": [],
-            "diagnostic_codes": ["ENV_MISSING_ENTRYPOINT"],
+            "diagnostic_codes": ["ENV_FAILURE"],
+
             "divergence_classification": None,
             "execution_timestamp": datetime.now(timezone.utc).isoformat(),
             "generator_status": "OK",
             "execution_status": execution_status,
         }
 
-    raise AssertionError("Candidate OK path reached without executable adapter")
+    candidate_result = candidate["result"]
+    candidate_status = candidate_result.get("terminal_status")
+    candidate_halts = candidate_result.get("halt_reasons", [])
+
+    oracle_status = oracle_result.get("terminal_status")
+    oracle_halts = oracle_result.get("halt_reasons", [])
+
+    if candidate_status != oracle_status:
+        classification = "MISMATCH_STATUS"
+    elif candidate_halts != oracle_halts:
+        classification = "MISMATCH_TRACE"
+    else:
+        classification = "MATCH"
+
+    return {
+        "candidate_sha": CANDIDATE_SHA,
+        "oracle_spec_hash": ORACLE_SPEC_HASH,
+        "seed": seed,
+        "vector": vector,
+        "mutation_fingerprint": fingerprint,
+        "original_payload_fingerprint": sha256(original),
+        "mutated_payload_fingerprint": sha256(mutated),
+        "candidate_verdict": candidate_result,
+        "oracle_verdict": oracle_result,
+        "ordered_halt_reasons": candidate_halts,
+        "diagnostic_codes": sorted({
+            item.get("diagnostic_code")
+            for item in candidate_halts + oracle_halts
+            if isinstance(item, dict) and item.get("diagnostic_code")
+        }),
+        "divergence_classification": classification,
+        "execution_timestamp": datetime.now(timezone.utc).isoformat(),
+        "generator_status": "OK",
+        "execution_status": "OK",
+    }
 
 
 def main() -> int:
