@@ -32,7 +32,7 @@ SEEDS = (
 VECTORS = tuple(range(1, 11))
 
 ARTIFACT_DIR = Path(__file__).resolve().parent / "artifacts"
-LEDGER_PATH = ARTIFACT_DIR / "s1-r2.ndjson"
+LEDGER_PATH = ARTIFACT_DIR / "s1-r3.ndjson"
 
 
 def canonical_json(value: Any) -> bytes:

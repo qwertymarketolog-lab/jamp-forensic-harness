@@ -61,3 +61,37 @@ jobs:
           assert result["ordered_halt_reasons"] == oracle["halt_reasons"]
           print("candidate result.n3 extraction: PASS")
           PY
+      - name: Checkout pinned JAMP candidate
+        uses: actions/checkout@v4
+        with:
+          repository: qwertymarketolog-lab/JAMP
+          ref: 0b0f15d4615cb129382c25af8859d450ac1193ff
+          path: jamp-mirror
+          fetch-depth: 1
+
+      - name: Verify pinned candidate and Frozen Core
+        run: |
+          test "$(git -C jamp-mirror rev-parse HEAD)" = "0b0f15d4615cb129382c25af8859d450ac1193ff"
+          test "$(git -C jamp-mirror rev-parse HEAD:src/jamp/run.py)" = "0fee0e1c5c1a1548361965ac51eacdeba62bfe8a"
+          echo "candidate_sha=$(git -C jamp-mirror rev-parse HEAD)"
+          echo "frozen_core_blob=$(git -C jamp-mirror rev-parse HEAD:src/jamp/run.py)"
+
+      - name: Execute S1-r3
+        id: s1
+        continue-on-error: true
+        run: |
+          python s1_execution.py --jamp-mirror "$GITHUB_WORKSPACE/jamp-mirror" | tee s1-r3-summary.json
+
+      - name: Publish S1-r3 ledger
+        uses: actions/upload-artifact@v4
+        with:
+          name: s1-r3-ledger
+          path: artifacts/s1-r3.ndjson
+          if-no-files-found: error
+
+      - name: Publish S1-r3 summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: s1-r3-summary
+          path: s1-r3-summary.json
+          if-no-files-found: error
